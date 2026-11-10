@@ -2,6 +2,9 @@ name: Build AudioPipe APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - media-button-bridge
 
 jobs:
   build:
@@ -30,4 +33,3 @@ jobs:
           name: AudioPipe-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          
