@@ -301,9 +301,11 @@ class MainActivity : AppCompatActivity() {
     private fun loadApps() {
         lifecycleScope.launch(Dispatchers.IO) {
             installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
-                .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 }
-                .sortedBy { packageManager.getApplicationLabel(it).toString() }
-
+    .filter {
+        it.flags and ApplicationInfo.FLAG_SYSTEM == 0 ||
+        it.packageName == "com.google.android.apps.youtube.music"
+    }
+    .sortedBy { packageManager.getApplicationLabel(it).toString() }
             val appNames = installedApps.map { packageManager.getApplicationLabel(it).toString() }
 
             withContext(Dispatchers.Main) {
