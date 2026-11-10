@@ -44,7 +44,11 @@ class ShizukuBackend(private val context: Context) {
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         Log.i(TAG, "Shizuku binder received")
-        bindIfPermitted()
+        if (hasPermission) {
+            bindIfPermitted()
+        } else {
+            requestPermission()
+        }
         stateChanged?.invoke()
     }
 
@@ -77,7 +81,11 @@ class ShizukuBackend(private val context: Context) {
         Shizuku.addRequestPermissionResultListener(permissionListener)
 
         if (Shizuku.pingBinder()) {
-            bindIfPermitted()
+            if (hasPermission) {
+                bindIfPermitted()
+            } else {
+                requestPermission()
+            }
         }
     }
 
