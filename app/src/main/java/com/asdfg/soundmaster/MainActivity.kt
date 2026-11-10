@@ -319,14 +319,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateAdbStatus(connected: Boolean) {
-        if (connected) {
-            statusIndicator.setBackgroundResource(R.drawable.status_indicator_green)
-            statusText.text = "Connected via ${shellExecutor.backendName}"
-            connectButton.text = shellExecutor.backendName
-        } else if (shellExecutor.isShizukuAvailable && !shellExecutor.hasShizukuPermission) {
+        if (shellExecutor.isShizukuAvailable && !shellExecutor.hasShizukuPermission) {
             statusIndicator.setBackgroundResource(R.drawable.status_indicator_red)
             statusText.text = "Shizuku permission required"
             connectButton.text = "Grant"
+        } else if (connected) {
+            statusIndicator.setBackgroundResource(R.drawable.status_indicator_green)
+            statusText.text = "Connected via ${shellExecutor.backendName}"
+            connectButton.text = shellExecutor.backendName
         } else {
             statusIndicator.setBackgroundResource(R.drawable.status_indicator_red)
             statusText.text = getString(R.string.disconnected)
