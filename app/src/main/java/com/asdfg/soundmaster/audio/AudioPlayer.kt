@@ -27,14 +27,22 @@ class AudioPlayer(
     var savedBands = arrayOf(50f, 50f, 50f)
 
     val equalizer by lazy { Equalizer(0, audioSessionId) }
-    val enhancer by lazy { LoudnessEnhancer(audioSessionId) }
+    private var enhancer: LoudnessEnhancer? = null
 
     fun setCurrentVolume(it: Float) {
         volume = (it / 100f).coerceAtMost(1f)
         setStereoVolume(volume * stereoGainFactor[0], volume * stereoGainFactor[1])
         try {
-            enhancer.enabled = it > 100
-            if (it > 100) enhancer.setTargetGain(((it.toInt() - 100) * 150))
+            if (it > 100) {
+                val effect = enhancer ?: LoudnessEnhancer(audioSessionId).also {
+                    enhancer = it
+                }
+                effect.setTargetGain((it.toInt() - 100) * 150)
+                effect.enabled = true
+            } else {
+                // Do not instantiate LoudnessEnhancer for the normal 0..100% car-audio path.
+                enhancer?.enabled = false
+            }
         } catch (e: Exception) {
             Log.i(LOG_TAG, "ENHANCER NOT SUPPORTED")
         }
