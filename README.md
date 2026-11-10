@@ -6,10 +6,10 @@ The current alpha combines the Shizuku-first backend, media-button forwarding, a
 
 ## Download
 
-The latest tested build is **AudioPipe 1.1.0-alpha.1**:
+The latest tested build is **AudioPipe 1.1.0-alpha.2**:
 
-- [Release notes](https://github.com/nikonovita/AudioPipe/releases/tag/v1.1.0-alpha.1)
-- [Download the APK](https://github.com/nikonovita/AudioPipe/releases/download/v1.1.0-alpha.1/AudioPipe-1.1.0-alpha.1.apk)
+- [Release notes](https://github.com/nikonovita/AudioPipe/releases/tag/v1.1.0-alpha.2)
+- [Download the APK](https://github.com/nikonovita/AudioPipe/releases/download/v1.1.0-alpha.2/AudioPipe-1.1.0-alpha.2.apk)
 
 The APK is a debug-signed alpha build intended for testing. Builds produced by this repository use the same project debug key, so they can update one another.
 
