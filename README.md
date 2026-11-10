@@ -14,6 +14,7 @@ A powerful Android audio routing utility that **captures audio from individual a
 - **Fast App Selection** – Search every installed/system app by label or package name, with shortcuts for YouTube Music, YouTube, and Spotify.
 - **Live Volume & Balance Control** – Adjust volume and stereo balance on the fly.
 - **Latency Monitoring** – Real-time latency display in the notification.
+- **Car-mode Efficiency** – Blocking capture reads, media-only capture, allocation-free buffer forwarding, and lazy audio effects reduce background CPU and battery use.
 - **Wireless ADB Integration** – Uses self-to-self ADB over wireless debugging to control `appops` permissions dynamically.
 
 ---

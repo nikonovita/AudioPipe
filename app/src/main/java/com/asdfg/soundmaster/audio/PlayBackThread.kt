@@ -91,23 +91,11 @@ class PlayBackThread(
         }
         
         try {
-            val allUsages = listOf(
-                AudioAttributes.USAGE_MEDIA,
-                AudioAttributes.USAGE_GAME,
-                AudioAttributes.USAGE_ALARM,
-                AudioAttributes.USAGE_NOTIFICATION,
-                AudioAttributes.USAGE_ASSISTANT,
-                AudioAttributes.USAGE_UNKNOWN,
-                AudioAttributes.USAGE_VOICE_COMMUNICATION
-            )
-            
-            val configBuilder = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
-            // Add common usage types
-            for (i in 0..3.coerceIn(0, allUsages.size - 1)) {
-                configBuilder.addMatchingUsage(allUsages[i])
-            }
-            
-            val config = configBuilder.addMatchingUid(getAppUidFromPackage(pkg))
+            // Car mode only needs music. Excluding games, alarms and notifications prevents
+            // unrelated audio from waking this capture path for the selected UID.
+            val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUid(getAppUidFromPackage(pkg))
                 .build()
             val audioFormat = AudioFormat.Builder()
                 .setEncoding(ENCODING)
@@ -131,12 +119,27 @@ class PlayBackThread(
             Log.i(LOG_TAG, "Audio Recording started for $pkg")
             
             while (playback) {
-                mCapture.read(dataBuffer, 0, bufferSize)
-                val players = synchronized(this) { mPlayers.values.toList() }
-                players.forEach {
-                    it.write(dataBuffer, 0, dataBuffer.size)
+                // A blocking read sleeps while no media frames are available.
+                val bytesRead = mCapture.read(
+                    dataBuffer,
+                    0,
+                    bufferSize,
+                    AudioRecord.READ_BLOCKING
+                )
+
+                if (bytesRead > 0) {
+                    // Forward only valid bytes and avoid allocating a List for every buffer.
+                    synchronized(this) {
+                        mPlayers.values.forEach { player ->
+                            player.write(dataBuffer, 0, bytesRead)
+                        }
+                    }
+                    loadedCycles++
+                } else if (bytesRead < 0) {
+                    Log.w(LOG_TAG, "AudioRecord read returned $bytesRead")
+                    // Prevent a tight CPU loop while the capture route is being rebuilt.
+                    sleep(20)
                 }
-                loadedCycles++
             }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Error in PlayBackThread", e)
@@ -151,6 +154,7 @@ class PlayBackThread(
         }
     }
 
+    @Synchronized
     fun hasOutput(deviceId: Int): Boolean {
         return mPlayers.contains(deviceId)
     }
@@ -200,6 +204,7 @@ class PlayBackThread(
                 bal = it.getBalance(),
                 bands = it.savedBands
             )
+            it.release()
         }
         return true
     }
@@ -255,30 +260,45 @@ class PlayBackThread(
             mCapture.stop()
             mCapture.release()
         } catch (_: Exception) {}
-        mPlayers.values.forEach { it.stop() }
+        synchronized(this) {
+            mPlayers.values.forEach { player ->
+                try {
+                    player.stop()
+                    player.release()
+                } catch (_: Exception) {
+                }
+            }
+            mPlayers.clear()
+        }
         super.interrupt()
     }
 
+    @Synchronized
     fun getBalance(device: Int): Float? {
         return mPlayers[device]?.getBalance()
     }
 
+    @Synchronized
     fun setBalance(device: Int, value: Float) {
         mPlayers[device]?.setBalance(value)
     }
 
+    @Synchronized
     fun getBand(deviceId: Int, band: Int): Float? {
         return mPlayers[deviceId]?.savedBands?.get(band)
     }
 
+    @Synchronized
     fun setBand(device: Int, band: Int, value: Float) {
         mPlayers[device]?.setBand(band, value)
     }
 
+    @Synchronized
     fun setVolume(outputDevice: Int, vol: Float) {
         mPlayers[outputDevice]?.setCurrentVolume(vol)
     }
 
+    @Synchronized
     fun getVolume(outputKey: Int): Float? {
         return mPlayers[outputKey]?.volume?.times(100f)
     }
