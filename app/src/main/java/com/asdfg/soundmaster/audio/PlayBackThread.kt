@@ -132,7 +132,7 @@ class PlayBackThread(
             
             while (playback) {
                 mCapture.read(dataBuffer, 0, bufferSize)
-                val players = mPlayers.values.toList()
+                val players = synchronized(this) { mPlayers.values.toList() }
                 players.forEach {
                     it.write(dataBuffer, 0, dataBuffer.size)
                 }
@@ -155,6 +155,7 @@ class PlayBackThread(
         return mPlayers.contains(deviceId)
     }
 
+    @Synchronized
     fun createOutput(
         device: AudioDeviceInfo? = null,
         outputKey: Int = device?.id ?: -1,
@@ -170,13 +171,16 @@ class PlayBackThread(
         )
         plyr.setCurrentVolume(startVolume)
         plyr.playbackRate = SAMPLE_RATE
-        plyr.preferredDevice = device
+        if (device != null) {
+            plyr.setPreferredDevice(device)
+        }
         plyr.play()
         bal?.let { plyr.setBalance(bal) }
         bands.forEachIndexed { index, fl -> plyr.setBand(index, fl) }
         mPlayers[outputKey] = plyr
     }
 
+    @Synchronized
     fun deleteOutput(outputKey: Int, interruption: Boolean = true): AudioPlayer? {
         val plyr = mPlayers.remove(outputKey)
         plyr?.stop()
@@ -186,6 +190,7 @@ class PlayBackThread(
         return plyr
     }
 
+    @Synchronized
     fun switchOutputDevice(currentKey: Int, newDevice: AudioDeviceInfo?): Boolean {
         if (mPlayers.contains(newDevice?.id ?: -1)) return false
         deleteOutput(currentKey, false)?.let {
@@ -196,6 +201,35 @@ class PlayBackThread(
                 bands = it.savedBands
             )
         }
+        return true
+    }
+
+    /**
+     * Re-applies the preferred output after Android has rebuilt the Bluetooth route. The public
+     * API can select an available device, but it cannot establish a disconnected A2DP profile.
+     */
+    @Synchronized
+    fun restorePreferredOutput(newDevice: AudioDeviceInfo): Boolean {
+        val entry = mPlayers.entries.firstOrNull() ?: return false
+        val player = entry.value
+        if (player.setPreferredDevice(newDevice)) {
+            if (entry.key != newDevice.id) {
+                mPlayers.remove(entry.key)
+                mPlayers[newDevice.id] = player
+            }
+            return true
+        }
+
+        val volume = player.volume * 100f
+        val balance = player.getBalance()
+        val bands = player.savedBands.copyOf()
+        mPlayers.remove(entry.key)
+        try {
+            player.stop()
+            player.release()
+        } catch (_: Exception) {
+        }
+        createOutput(newDevice, newDevice.id, volume, balance, bands)
         return true
     }
 

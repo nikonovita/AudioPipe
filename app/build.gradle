@@ -7,6 +7,18 @@ android {
     namespace 'com.asdfg.soundmaster'
     compileSdk 34
 
+    signingConfigs {
+        debug {
+            // This project-local key intentionally signs every reproducible debug build.
+            // It is not a production credential; keeping it in the repository makes APKs
+            // produced locally and by GitHub Actions update-compatible with each other.
+            storeFile file('audiopipe-debug.keystore')
+            storePassword 'android'
+            keyAlias 'audiopipe-debug'
+            keyPassword 'android'
+        }
+    }
+
     defaultConfig {
         applicationId "com.asdfg.soundmaster"
         minSdk 30
@@ -27,6 +39,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -53,6 +68,7 @@ android {
 
     buildFeatures {
         viewBinding true
+        aidl true
     }
 
     testOptions {
@@ -68,6 +84,10 @@ dependencies {
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.media:media:1.7.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+
+    // Shizuku: privileged shell backend used while Wireless Android Auto owns Wi-Fi
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
     
     // Coroutines
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
