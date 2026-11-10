@@ -91,23 +91,11 @@ class PlayBackThread(
         }
         
         try {
-            val allUsages = listOf(
-                AudioAttributes.USAGE_MEDIA,
-                AudioAttributes.USAGE_GAME,
-                AudioAttributes.USAGE_ALARM,
-                AudioAttributes.USAGE_NOTIFICATION,
-                AudioAttributes.USAGE_ASSISTANT,
-                AudioAttributes.USAGE_UNKNOWN,
-                AudioAttributes.USAGE_VOICE_COMMUNICATION
-            )
-            
-            val configBuilder = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
-            // Add common usage types
-            for (i in 0..3.coerceIn(0, allUsages.size - 1)) {
-                configBuilder.addMatchingUsage(allUsages[i])
-            }
-            
-            val config = configBuilder.addMatchingUid(getAppUidFromPackage(pkg))
+            // Car mode only needs media playback. Avoid waking the capture path for
+            // game/alarm/notification audio from the selected UID.
+            val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUid(getAppUidFromPackage(pkg))
                 .build()
             val audioFormat = AudioFormat.Builder()
                 .setEncoding(ENCODING)
@@ -131,12 +119,28 @@ class PlayBackThread(
             Log.i(LOG_TAG, "Audio Recording started for $pkg")
             
             while (playback) {
-                mCapture.read(dataBuffer, 0, bufferSize)
-                val players = mPlayers.values.toList()
-                players.forEach {
-                    it.write(dataBuffer, 0, dataBuffer.size)
+                // Blocking read lets the thread sleep while no media frames are available.
+                val bytesRead = mCapture.read(
+                    dataBuffer,
+                    0,
+                    bufferSize,
+                    AudioRecord.READ_BLOCKING
+                )
+
+                if (bytesRead > 0) {
+                    // Only forward valid bytes returned by AudioRecord.
+                    // Avoid allocating a new List on every audio buffer.
+                    synchronized(mPlayers) {
+                        mPlayers.values.forEach { player ->
+                            player.write(dataBuffer, 0, bytesRead)
+                        }
+                    }
+                    loadedCycles++
+                } else if (bytesRead < 0) {
+                    Log.w(LOG_TAG, "AudioRecord read returned $bytesRead")
+                    // Avoid a tight error loop if the capture path is temporarily unavailable.
+                    sleep(20)
                 }
-                loadedCycles++
             }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Error in PlayBackThread", e)
@@ -174,11 +178,15 @@ class PlayBackThread(
         plyr.play()
         bal?.let { plyr.setBalance(bal) }
         bands.forEachIndexed { index, fl -> plyr.setBand(index, fl) }
-        mPlayers[outputKey] = plyr
+        synchronized(mPlayers) {
+            mPlayers[outputKey] = plyr
+        }
     }
 
     fun deleteOutput(outputKey: Int, interruption: Boolean = true): AudioPlayer? {
-        val plyr = mPlayers.remove(outputKey)
+        val plyr = synchronized(mPlayers) {
+            mPlayers.remove(outputKey)
+        }
         plyr?.stop()
         if (mPlayers.size == 0 && interruption) {
             interrupt()
@@ -221,7 +229,10 @@ class PlayBackThread(
             mCapture.stop()
             mCapture.release()
         } catch (_: Exception) {}
-        mPlayers.values.forEach { it.stop() }
+        synchronized(mPlayers) {
+            mPlayers.values.forEach { it.stop() }
+            mPlayers.clear()
+        }
         super.interrupt()
     }
 
