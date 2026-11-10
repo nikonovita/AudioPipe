@@ -1,6 +1,7 @@
 package com.asdfg.soundmaster.audio
 
 import android.app.Activity
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -9,10 +10,14 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes.ALLOW_CAPTURE_BY_NONE
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.AudioDeviceCallback
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
@@ -38,6 +43,17 @@ class SoundMasterService : Service() {
     private lateinit var mediaSession: android.support.v4.media.session.MediaSessionCompat
     private var shellExecutor: ShellExecutor? = null
     private var mediaTargetPackage: String? = null
+    private val routeHandler = Handler(Looper.getMainLooper())
+    private var preferredOutput: AudioOutputPreference? = null
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            scheduleRouteRestore()
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            scheduleRouteRestore()
+        }
+    }
     
     var packageThreads = hashMapOf<String, PlayBackThread>()
     private var latencyUpdateTimer = Timer()
@@ -142,6 +158,16 @@ class SoundMasterService : Service() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOnlyAlertOnce(true)
+            .addAction(
+                android.R.drawable.ic_menu_manage,
+                getString(R.string.open_bluetooth_settings),
+                PendingIntent.getActivity(
+                    this,
+                    0,
+                    Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            )
             // Add media style to notification for lockscreen controls
             .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
                 .setMediaSession(mediaSession.sessionToken))
@@ -175,6 +201,7 @@ class SoundMasterService : Service() {
         ) as MediaProjectionManager
 
         audioManager.setAllowedCapturePolicy(ALLOW_CAPTURE_BY_NONE)
+        audioManager.registerAudioDeviceCallback(audioDeviceCallback, routeHandler)
         
         Log.d(TAG, "SoundMasterService created")
         instance = this
@@ -223,6 +250,9 @@ class SoundMasterService : Service() {
             mediaTargetPackage = pkgs.firstOrNull()
             val devices = intent.getIntArrayExtra("devices")?.toMutableList() ?: mutableListOf()
             val volumes = intent.getFloatArrayExtra("volumes")?.toMutableList() ?: mutableListOf()
+            preferredOutput = intent.getStringExtra(EXTRA_OUTPUT_NAME)?.let { name ->
+                AudioOutputPreference(intent.getIntExtra(EXTRA_OUTPUT_TYPE, -1), name)
+            }
 
             if (pkgs.isNotEmpty()) {
                 running = true
@@ -240,10 +270,13 @@ class SoundMasterService : Service() {
                 pkgs.forEachIndexed { index, pkg ->
                     val deviceId = devices.getOrElse(index) { -1 }
                     val volume = volumes.getOrElse(index) { 100f }
-                    val device = audioDevices.find { it.id == deviceId }
+                    val device = preferredOutput?.let { preference ->
+                        audioDevices.firstOrNull(preference::matches)
+                    } ?: audioDevices.find { it.id == deviceId }
                     
                     startAudioCapture(pkg, device, volume, shellExecutor!!)
                 }
+                scheduleRouteRestore()
             }
         }
         return START_STICKY
@@ -270,6 +303,27 @@ class SoundMasterService : Service() {
         Log.d(TAG, "Started audio capture for $packageName -> ${device?.productName ?: "default"}")
     }
 
+    private fun scheduleRouteRestore() {
+        ROUTE_RETRY_DELAYS_MS.forEach { delay ->
+            routeHandler.postDelayed({ restorePreferredRoute() }, delay)
+        }
+    }
+
+    private fun restorePreferredRoute() {
+        val preference = preferredOutput ?: return
+        val device = getAudioOutputDevices().firstOrNull(preference::matches)
+        if (device == null) {
+            routeStatus = RouteStatus.DISCONNECTED
+            return
+        }
+
+        val restored = packageThreads.values.map { it.restorePreferredOutput(device) }.all { it }
+        if (restored && packageThreads.isNotEmpty()) {
+            routeStatus = RouteStatus.CONNECTED
+            Log.i(TAG, "Preferred output restored: ${device.productName} (${device.id})")
+        }
+    }
+
     fun getAudioOutputDevices(): List<AudioDeviceInfo> {
         return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             .filter { 
@@ -284,11 +338,14 @@ class SoundMasterService : Service() {
     override fun onDestroy() {
         running = false
         latencyUpdateTimer.cancel()
+        routeHandler.removeCallbacksAndMessages(null)
+        audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
         packageThreads.forEach { it.value.interrupt() }
         mediaProjection?.stop()
         mediaSession.release()
         super.onDestroy()
         instance = null
+        routeStatus = RouteStatus.IDLE
         Log.d(TAG, "SoundMasterService destroyed")
     }
 
@@ -297,10 +354,16 @@ class SoundMasterService : Service() {
         const val NOTIFICATION_ID = 1
         const val NOTIFICATION_CHANNEL = "soundmaster_service"
         const val UPDATE_INTERVAL = 1000L
+        const val EXTRA_OUTPUT_NAME = "output_name"
+        const val EXTRA_OUTPUT_TYPE = "output_type"
+        private val ROUTE_RETRY_DELAYS_MS = longArrayOf(0L, 750L, 2_000L, 5_000L, 10_000L)
+
+        enum class RouteStatus { IDLE, CONNECTED, DISCONNECTED }
 
         var running = false
         var instance: SoundMasterService? = null
         var startingIntent: Intent? = null
         var projectionData: Intent? = null
+        @Volatile var routeStatus: RouteStatus = RouteStatus.IDLE
     }
 }
