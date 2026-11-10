@@ -13,7 +13,7 @@ data class AudioOutputPreference(
     val productName: String
 ) {
     fun matches(device: AudioDeviceInfo): Boolean {
-        return device.type == type && normalize(device.productName?.toString()) == normalize(productName)
+        return device.type == type && normalize(device.productName?.toString().orEmpty()) == normalize(productName)
     }
 
     companion object {

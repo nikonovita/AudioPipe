@@ -460,7 +460,7 @@ class MainActivity : AppCompatActivity() {
         val savedBluetoothMissing = saved?.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP && preferredIndex < 0
         bluetoothSettingsButton.visibility = if (savedBluetoothMissing) View.VISIBLE else View.GONE
         if (savedBluetoothMissing) {
-            serviceStatus.text = getString(R.string.bluetooth_disconnected, saved.productName)
+            serviceStatus.text = getString(R.string.bluetooth_disconnected, saved?.productName.orEmpty())
         }
         outputSpinner.post {
             selectedOutput = audioOutputs.getOrNull(index)
