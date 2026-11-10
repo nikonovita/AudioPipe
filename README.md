@@ -1,128 +1,108 @@
 # AudioPipe
 
-A powerful Android audio routing utility that **captures audio from individual apps** and routes it to **specific output devices** (like Bluetooth headphones or the speaker), effectively bypassing the system's default audio routing.
+AudioPipe captures audio from one Android app and plays it through a selected output device. It is designed for setups where Android Auto should keep navigation and calls on the car audio system while music is routed to a separate Bluetooth receiver or headphones.
 
-> **Use Case:** Listen to Spotify through your AirPods while Android Auto plays navigation through the car speakers.
+The current alpha combines the Shizuku-first backend, media-button forwarding, automatic Bluetooth route recovery, fast app selection, and car-mode power optimizations.
 
----
+## Download
 
-## ✨ Features
+The latest tested build is **AudioPipe 1.1.0-alpha.1**:
 
-- **Per-App Audio Capture** – Select any installed app and capture its audio output.
-- **Custom Output Routing** – Route captured audio to Bluetooth, wired headphones, USB headsets, or the built-in speaker.
-- **Bluetooth Route Recovery** – Remembers the selected output and re-applies it when Android Auto rebuilds the audio route.
-- **Fast App Selection** – Search every installed/system app by label or package name, with shortcuts for YouTube Music, YouTube, and Spotify.
-- **Live Volume & Balance Control** – Adjust volume and stereo balance on the fly.
-- **Latency Monitoring** – Real-time latency display in the notification.
-- **Car-mode Efficiency** – Blocking capture reads, media-only capture, allocation-free buffer forwarding, and lazy audio effects reduce background CPU and battery use.
-- **Wireless ADB Integration** – Uses self-to-self ADB over wireless debugging to control `appops` permissions dynamically.
+- [Release notes](https://github.com/nikonovita/AudioPipe/releases/tag/v1.1.0-alpha.1)
+- [Download the APK](https://github.com/nikonovita/AudioPipe/releases/download/v1.1.0-alpha.1/AudioPipe-1.1.0-alpha.1.apk)
 
----
+The APK is a debug-signed alpha build intended for testing. Builds produced by this repository use the same project debug key, so they can update one another.
 
-## 🛠 Requirements
+## Features
 
-| Requirement | Details |
-|-------------|---------|
-| **Android Version** | 10 (Q) or higher |
-| **Wireless Debugging** | Must be enabled in Developer Options |
-| **ADB Key** | Import an existing `adbkey` or pair via Shizuku first |
+- **Per-app audio capture** — route music from one selected app without changing the system-wide output.
+- **Shizuku-first backend** — privileged `appops` commands continue working when wireless Android Auto occupies the phone's Wi-Fi connection.
+- **ADB fallback** — self-to-self wireless ADB remains available when Shizuku is unavailable.
+- **Bluetooth route recovery** — remembers the chosen output by device type and name, monitors `AudioDeviceCallback`, and reapplies `AudioTrack.setPreferredDevice()` after Android Auto rebuilds the route.
+- **Disconnect fallback** — provides a Bluetooth settings button in the app and notification when Android fully disconnects the selected A2DP device.
+- **App search** — filters installed apps by display name or package name, including system apps.
+- **Quick selection** — dedicated buttons for YouTube Music, YouTube, and Spotify.
+- **Media-button bridge** — forwards play, pause, previous, and next commands to the selected app when Notification Access is enabled.
+- **Volume and balance controls** — adjusts the routed stream without changing the selected source app.
+- **Car-mode efficiency** — uses blocking capture reads, media-only capture, valid-byte forwarding, allocation-free buffer fan-out, and lazy audio effects.
 
----
+## Requirements
 
-## 📦 Installation
+- Android 11 or newer (`minSdk 30`).
+- Shizuku installed and running is strongly recommended.
+- Wireless debugging enabled when required to start Shizuku or use the ADB fallback.
+- Screen-capture permission each time an AudioPipe routing session starts.
+- Notification Access for direct media-button forwarding. Without it, AudioPipe falls back to shell media-key events.
 
-1. **Build from source:**
-   ```bash
-   ./gradlew assembleDebug
-   ```
-2. Install the APK on your device:
-   ```bash
-   adb install app/build/outputs/apk/debug/app-debug.apk
-   ```
-3. Enable **Wireless Debugging** in Developer Options.
-4. Import your ADB private key (usually `~/.android/adbkey`) or pair via Shizuku.
+## Recommended setup
 
----
+1. Install and start [Shizuku](https://shizuku.rikka.app/guide/setup/).
+2. Install the AudioPipe alpha APK.
+3. Open AudioPipe and grant Shizuku access when prompted.
+4. Grant microphone/screen-capture permissions required by Android playback capture.
+5. Optionally enable **Notification Access** for `AudioPipe Media Bridge` to improve media-button forwarding.
+6. Find the source app using search or a quick-select button.
+7. Choose the preferred Bluetooth, wired, USB, or built-in output.
+8. Tap **Start** and approve Android's screen-capture dialog.
 
-## 🚀 Usage
+When Android Auto changes the Bluetooth route, AudioPipe retries the preferred output immediately and again after short delays. If the device reappears as an available A2DP output, routing is restored automatically.
 
-1. Launch **AudioPipe**.
-2. If not connected, tap **Setup** and import your ADB key.
-3. Select the **app** you want to capture (e.g., Spotify).
-4. Select the **output device** (e.g., Bluetooth headphones).
-5. Adjust **volume** and **balance** as desired.
-6. Tap **Start** to begin audio routing.
+## Bluetooth limitation
 
-The app will:
-- Deny the selected app's `PLAY_AUDIO` permission (so it doesn't play to the system).
-- Capture its audio via `MediaProjection`.
-- Play the captured audio to your chosen output device.
+Android does not expose a public API that lets an ordinary third-party app force-connect a disconnected A2DP profile. AudioPipe can automatically reselect BlueMusic/SWL-BT, Sony WH-1000XM3, or another saved output as soon as Android reports it as available. If Android Auto completely disconnects the profile, reconnect it through the Bluetooth settings shortcut; AudioPipe will restore its route after the device returns.
 
----
+No root-only or hidden Bluetooth APIs are used.
 
-## 🏗 Architecture
+## How it works
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        MainActivity                         │
-│  - App selection, output selection, volume/balance controls │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     SoundMasterService                      │
-│  - Foreground service with MediaProjection                  │
-│  - Manages PlayBackThread instances per app                 │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│  PlayBackThread │ │  PlayBackThread │ │  PlayBackThread │
-│  (per app)      │ │  (per app)      │ │  (per app)      │
-│  - AudioRecord  │ │  - AudioRecord  │ │  - AudioRecord  │
-│  - AudioPlayer  │ │  - AudioPlayer  │ │  - AudioPlayer  │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
-          │
-          ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       ShellExecutor                         │
-│  - ADB connection via AdbClient                             │
-│  - Runs shell commands (appops set, etc.)                   │
-└─────────────────────────────────────────────────────────────┘
+```text
+Source app
+   │
+   │ Android Playback Capture
+   ▼
+AudioRecord ──► PlayBackThread ──► AudioTrack
+                                      │
+                                      │ preferredDevice
+                                      ▼
+                         Selected Bluetooth / wired output
+
+Shizuku (preferred) or ADB (fallback)
+   └── controls PLAY_AUDIO app-op for the selected source app
 ```
 
----
+The foreground service watches audio-device changes. Device IDs are not persisted because Android can assign a different ID after reconnecting. AudioPipe instead matches the saved device type and normalized product name, then reapplies the current route without restarting the capture session.
 
-## 📁 Project Structure
+## Building
 
-```
-app/src/main/java/com/asdfg/soundmaster/
-├── MainActivity.kt           # Main UI and controls
-├── adb/
-│   ├── AdbClient.kt          # ADB protocol implementation
-│   ├── AdbKey.kt             # RSA key management
-│   ├── AdbMdns.kt            # mDNS discovery for wireless debugging
-│   ├── AdbMessage.kt         # ADB message format
-│   ├── AdbProtocol.kt        # ADB protocol constants
-│   └── ShellExecutor.kt      # High-level shell command execution
-└── audio/
-    ├── AudioPlayer.kt        # AudioTrack wrapper with volume/balance
-    ├── PlayBackThread.kt     # Audio capture and playback thread
-    └── SoundMasterService.kt # Foreground service orchestrating capture
+The project requires JDK 17 and Android SDK 34.
+
+```bash
+./gradlew testDebugUnitTest assembleDebug
 ```
 
----
+The generated APK is located at:
 
-## ⚠️ Known Limitations
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
 
-- **MediaProjection Required** – A screen capture permission dialog appears on each start.
-- **No Pairing** – This app cannot pair with wireless debugging directly; use Shizuku or import an existing key.
-- **Media buttons** – Forwarding depends on Notification Access; shell input remains the fallback.
-- **Bluetooth reconnect** – Android's public APIs let AudioPipe re-select an A2DP device only while it is available. If Android Auto fully disconnects the Bluetooth profile, Android requires the user or the system UI to reconnect it; AudioPipe opens Bluetooth settings for that case.
+GitHub Actions runs the unit tests, builds the APK, and uploads it as an artifact for pushes to the active development/release branches.
 
----
+## Current alpha limitations
 
-## 📄 License
+- Android displays a MediaProjection consent dialog for every new routing session.
+- Some apps prohibit playback capture through their own Android audio policy.
+- A fully disconnected Bluetooth profile cannot be force-connected without unsupported privileged or hidden APIs.
+- Manufacturer-specific Android audio routing may behave differently; Pixel/stock Android is the primary target.
+- This is an alpha/debug build and may contain incomplete UI polish or device-specific issues.
 
-This project is provided as-is for educational purposes.
+## Branches
+
+- `main` — upstream baseline.
+- `media-button-bridge` — Shizuku, media controls, app search, and Bluetooth recovery development.
+- `car-audio-optimized` — original energy-optimization work.
+- `alpha-release` — combined alpha release candidate.
+
+## License
+
+This project is provided as-is for educational and experimental use. See [LICENSE.txt](LICENSE.txt).
