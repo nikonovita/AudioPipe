@@ -18,6 +18,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import com.asdfg.soundmaster.R
 import com.asdfg.soundmaster.adb.ShellExecutor
 import java.util.Timer
@@ -36,6 +37,7 @@ class SoundMasterService : Service() {
     
     private lateinit var mediaSession: android.support.v4.media.session.MediaSessionCompat
     private var shellExecutor: ShellExecutor? = null
+    private var mediaTargetPackage: String? = null
     
     var packageThreads = hashMapOf<String, PlayBackThread>()
     private var latencyUpdateTimer = Timer()
@@ -69,10 +71,46 @@ class SoundMasterService : Service() {
                 }
                 
                 override fun onMediaButtonEvent(mediaButtonEvent: Intent?): Boolean {
-                    // Let the default implementation handle mapping to onPlay/onPause/etc.
-                    return super.onMediaButtonEvent(mediaButtonEvent)
+                    val event = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        mediaButtonEvent?.getParcelableExtra(
+                            Intent.EXTRA_KEY_EVENT,
+                            android.view.KeyEvent::class.java
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        mediaButtonEvent?.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+                    }
+
+                    if (event != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
+                        handleMediaKey(event.keyCode)
+                        return true
+                    }
+                    return true
                 }
             })
+
+            setFlags(
+                android.support.v4.media.session.MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                    android.support.v4.media.session.MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+            )
+
+            setPlaybackState(
+                PlaybackStateCompat.Builder()
+                    .setActions(
+                        PlaybackStateCompat.ACTION_PLAY or
+                            PlaybackStateCompat.ACTION_PAUSE or
+                            PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+                    )
+                    .setState(
+                        PlaybackStateCompat.STATE_PLAYING,
+                        PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN,
+                        1.0f
+                    )
+                    .build()
+            )
+
             isActive = true
         }
 
@@ -143,32 +181,46 @@ class SoundMasterService : Service() {
     }
 
     private fun handleMediaKey(keyCode: Int) {
-        // Special Resume Sequence: Allow -> Play -> Deny
+        val targetPackage = mediaTargetPackage ?: packageThreads.keys.firstOrNull()
+
+        if (targetPackage != null) {
+            val needsTemporaryAudioAllow =
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||
+                    keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                    keyCode == android.view.KeyEvent.KEYCODE_HEADSETHOOK
+
+            if (needsTemporaryAudioAllow) {
+                packageThreads[targetPackage]?.setAppOps(true)
+            }
+
+            if (MediaSessionBridgeService.dispatchToPackage(this, targetPackage, keyCode)) {
+                if (needsTemporaryAudioAllow) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        packageThreads[targetPackage]?.setAppOps(false)
+                    }, 500)
+                }
+                return
+            }
+
+            if (needsTemporaryAudioAllow) {
+                packageThreads[targetPackage]?.setAppOps(false)
+            }
+        }
+
+        // Fallback for devices where Notification Access has not been granted yet.
         val dummyListener = object : ShellExecutor.CommandResultListener {
             override fun onCommandResult(output: String, done: Boolean) {}
             override fun onCommandError(error: String) {
                 Log.e(TAG, "Media Key Error: $error")
             }
         }
-
-        if (keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY) {
-            packageThreads.forEach { (_, thread) -> thread.setAppOps(true) }
-            
-            shellExecutor?.command("input keyevent $keyCode", dummyListener)
-            
-            // Re-deny after delay
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                packageThreads.forEach { (_, thread) -> thread.setAppOps(false) }
-            }, 500)
-        } else {
-            // Standard Pass-through
-            shellExecutor?.command("input keyevent $keyCode", dummyListener)
-        }
+        shellExecutor?.command("input keyevent $keyCode", dummyListener)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null && projectionData != null) {
             val pkgs = intent.getStringArrayExtra("packages")?.toMutableList() ?: mutableListOf()
+            mediaTargetPackage = pkgs.firstOrNull()
             val devices = intent.getIntArrayExtra("devices")?.toMutableList() ?: mutableListOf()
             val volumes = intent.getFloatArrayExtra("volumes")?.toMutableList() ?: mutableListOf()
 
