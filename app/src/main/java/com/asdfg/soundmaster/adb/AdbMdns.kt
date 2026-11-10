@@ -8,7 +8,6 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import java.io.IOException
 import java.net.InetSocketAddress
-import java.net.NetworkInterface
 import java.net.ServerSocket
 
 private const val TAG = "AdbMdns"
@@ -67,15 +66,12 @@ class AdbMdns(
     }
 
     private fun onServiceResolved(resolvedService: NsdServiceInfo) {
-        if (running && NetworkInterface.getNetworkInterfaces()
-                .asSequence()
-                .any { networkInterface ->
-                    networkInterface.inetAddresses
-                        .asSequence()
-                        .any { resolvedService.host.hostAddress == it.hostAddress }
-                }
-            && isPortInUse(resolvedService.port)
-        ) {
+        // We only need the port. The embedded ADB client connects to 127.0.0.1,
+        // so tying discovery to the currently active Wi-Fi interface breaks when
+        // Wireless Android Auto moves the phone onto its projection/P2P network.
+        // Accept the discovered service only when that same port is actually
+        // listening on local loopback.
+        if (running && isPortInUse(resolvedService.port)) {
             serviceName = resolvedService.serviceName
             observer(resolvedService.port)
         }

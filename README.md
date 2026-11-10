@@ -10,8 +10,11 @@ A powerful Android audio routing utility that **captures audio from individual a
 
 - **Per-App Audio Capture** – Select any installed app and capture its audio output.
 - **Custom Output Routing** – Route captured audio to Bluetooth, wired headphones, USB headsets, or the built-in speaker.
+- **Bluetooth Route Recovery** – Remembers the selected output and re-applies it when Android Auto rebuilds the audio route.
+- **Fast App Selection** – Search every installed/system app by label or package name, with shortcuts for YouTube Music, YouTube, and Spotify.
 - **Live Volume & Balance Control** – Adjust volume and stereo balance on the fly.
 - **Latency Monitoring** – Real-time latency display in the notification.
+- **Car-mode Efficiency** – Blocking capture reads, media-only capture, allocation-free buffer forwarding, and lazy audio effects reduce background CPU and battery use.
 - **Wireless ADB Integration** – Uses self-to-self ADB over wireless debugging to control `appops` permissions dynamically.
 
 ---
@@ -115,7 +118,8 @@ app/src/main/java/com/asdfg/soundmaster/
 
 - **MediaProjection Required** – A screen capture permission dialog appears on each start.
 - **No Pairing** – This app cannot pair with wireless debugging directly; use Shizuku or import an existing key.
-- **Media Buttons** – Hardware media button forwarding is not currently functional.
+- **Media buttons** – Forwarding depends on Notification Access; shell input remains the fallback.
+- **Bluetooth reconnect** – Android's public APIs let AudioPipe re-select an A2DP device only while it is available. If Android Auto fully disconnects the Bluetooth profile, Android requires the user or the system UI to reconnect it; AudioPipe opens Bluetooth settings for that case.
 
 ---
 

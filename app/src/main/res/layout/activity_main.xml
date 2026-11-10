@@ -39,7 +39,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="ADB Connection"
+                    android:text="Privileged Access"
                     android:textColor="@android:color/white"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -106,6 +106,48 @@
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
+                <EditText
+                    android:id="@+id/appSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/search_apps"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:textColor="@android:color/white"
+                    android:textColorHint="#888888" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/youtubeMusicButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="YT Music"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/youtubeButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="YouTube"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/spotifyButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Spotify"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
                 <Spinner
                     android:id="@+id/appSpinner"
                     android:layout_width="match_parent"
@@ -143,6 +185,15 @@
                     android:layout_height="48dp"
                     android:layout_marginTop="8dp"
                     android:background="@android:color/darker_gray" />
+
+                <Button
+                    android:id="@+id/bluetoothSettingsButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/open_bluetooth_settings"
+                    android:visibility="gone" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

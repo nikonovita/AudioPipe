@@ -91,23 +91,11 @@ class PlayBackThread(
         }
         
         try {
-            val allUsages = listOf(
-                AudioAttributes.USAGE_MEDIA,
-                AudioAttributes.USAGE_GAME,
-                AudioAttributes.USAGE_ALARM,
-                AudioAttributes.USAGE_NOTIFICATION,
-                AudioAttributes.USAGE_ASSISTANT,
-                AudioAttributes.USAGE_UNKNOWN,
-                AudioAttributes.USAGE_VOICE_COMMUNICATION
-            )
-            
-            val configBuilder = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
-            // Add common usage types
-            for (i in 0..3.coerceIn(0, allUsages.size - 1)) {
-                configBuilder.addMatchingUsage(allUsages[i])
-            }
-            
-            val config = configBuilder.addMatchingUid(getAppUidFromPackage(pkg))
+            // Car mode only needs music. Excluding games, alarms and notifications prevents
+            // unrelated audio from waking this capture path for the selected UID.
+            val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUid(getAppUidFromPackage(pkg))
                 .build()
             val audioFormat = AudioFormat.Builder()
                 .setEncoding(ENCODING)
@@ -131,12 +119,27 @@ class PlayBackThread(
             Log.i(LOG_TAG, "Audio Recording started for $pkg")
             
             while (playback) {
-                mCapture.read(dataBuffer, 0, bufferSize)
-                val players = mPlayers.values.toList()
-                players.forEach {
-                    it.write(dataBuffer, 0, dataBuffer.size)
+                // A blocking read sleeps while no media frames are available.
+                val bytesRead = mCapture.read(
+                    dataBuffer,
+                    0,
+                    bufferSize,
+                    AudioRecord.READ_BLOCKING
+                )
+
+                if (bytesRead > 0) {
+                    // Forward only valid bytes and avoid allocating a List for every buffer.
+                    synchronized(this) {
+                        mPlayers.values.forEach { player ->
+                            player.write(dataBuffer, 0, bytesRead)
+                        }
+                    }
+                    loadedCycles++
+                } else if (bytesRead < 0) {
+                    Log.w(LOG_TAG, "AudioRecord read returned $bytesRead")
+                    // Prevent a tight CPU loop while the capture route is being rebuilt.
+                    sleep(20)
                 }
-                loadedCycles++
             }
         } catch (e: Exception) {
             Log.e(LOG_TAG, "Error in PlayBackThread", e)
@@ -151,10 +154,12 @@ class PlayBackThread(
         }
     }
 
+    @Synchronized
     fun hasOutput(deviceId: Int): Boolean {
         return mPlayers.contains(deviceId)
     }
 
+    @Synchronized
     fun createOutput(
         device: AudioDeviceInfo? = null,
         outputKey: Int = device?.id ?: -1,
@@ -170,13 +175,16 @@ class PlayBackThread(
         )
         plyr.setCurrentVolume(startVolume)
         plyr.playbackRate = SAMPLE_RATE
-        plyr.preferredDevice = device
+        if (device != null) {
+            plyr.setPreferredDevice(device)
+        }
         plyr.play()
         bal?.let { plyr.setBalance(bal) }
         bands.forEachIndexed { index, fl -> plyr.setBand(index, fl) }
         mPlayers[outputKey] = plyr
     }
 
+    @Synchronized
     fun deleteOutput(outputKey: Int, interruption: Boolean = true): AudioPlayer? {
         val plyr = mPlayers.remove(outputKey)
         plyr?.stop()
@@ -186,6 +194,7 @@ class PlayBackThread(
         return plyr
     }
 
+    @Synchronized
     fun switchOutputDevice(currentKey: Int, newDevice: AudioDeviceInfo?): Boolean {
         if (mPlayers.contains(newDevice?.id ?: -1)) return false
         deleteOutput(currentKey, false)?.let {
@@ -195,7 +204,37 @@ class PlayBackThread(
                 bal = it.getBalance(),
                 bands = it.savedBands
             )
+            it.release()
         }
+        return true
+    }
+
+    /**
+     * Re-applies the preferred output after Android has rebuilt the Bluetooth route. The public
+     * API can select an available device, but it cannot establish a disconnected A2DP profile.
+     */
+    @Synchronized
+    fun restorePreferredOutput(newDevice: AudioDeviceInfo): Boolean {
+        val entry = mPlayers.entries.firstOrNull() ?: return false
+        val player = entry.value
+        if (player.setPreferredDevice(newDevice)) {
+            if (entry.key != newDevice.id) {
+                mPlayers.remove(entry.key)
+                mPlayers[newDevice.id] = player
+            }
+            return true
+        }
+
+        val volume = player.volume * 100f
+        val balance = player.getBalance()
+        val bands = player.savedBands.copyOf()
+        mPlayers.remove(entry.key)
+        try {
+            player.stop()
+            player.release()
+        } catch (_: Exception) {
+        }
+        createOutput(newDevice, newDevice.id, volume, balance, bands)
         return true
     }
 
@@ -221,30 +260,45 @@ class PlayBackThread(
             mCapture.stop()
             mCapture.release()
         } catch (_: Exception) {}
-        mPlayers.values.forEach { it.stop() }
+        synchronized(this) {
+            mPlayers.values.forEach { player ->
+                try {
+                    player.stop()
+                    player.release()
+                } catch (_: Exception) {
+                }
+            }
+            mPlayers.clear()
+        }
         super.interrupt()
     }
 
+    @Synchronized
     fun getBalance(device: Int): Float? {
         return mPlayers[device]?.getBalance()
     }
 
+    @Synchronized
     fun setBalance(device: Int, value: Float) {
         mPlayers[device]?.setBalance(value)
     }
 
+    @Synchronized
     fun getBand(deviceId: Int, band: Int): Float? {
         return mPlayers[deviceId]?.savedBands?.get(band)
     }
 
+    @Synchronized
     fun setBand(device: Int, band: Int, value: Float) {
         mPlayers[device]?.setBand(band, value)
     }
 
+    @Synchronized
     fun setVolume(outputDevice: Int, vol: Float) {
         mPlayers[outputDevice]?.setCurrentVolume(vol)
     }
 
+    @Synchronized
     fun getVolume(outputKey: Int): Float? {
         return mPlayers[outputKey]?.volume?.times(100f)
     }

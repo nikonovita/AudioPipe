@@ -5,14 +5,17 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
+import com.asdfg.soundmaster.shizuku.ShizukuBackend
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG = "ShellExecutor"
 
 /**
- * Shell command executor using embedded ADB client
- * Replaces ShizukuRunner functionality
+ * Privileged command executor.
+ *
+ * Preferred backend: Shizuku UserService (works while Wireless Android Auto owns Wi-Fi).
+ * Fallback backend: embedded self-ADB over 127.0.0.1.
  */
 @RequiresApi(Build.VERSION_CODES.R)
 class ShellExecutor(private val context: Context) {
@@ -35,34 +38,58 @@ class ShellExecutor(private val context: Context) {
     private var cachedPort: Int = -1
     private var cachedClient: AtomicReference<AdbClient?> = AtomicReference(null)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val shizuku = ShizukuBackend(context)
+
+    fun initializeShizuku(onStateChanged: (() -> Unit)? = null) {
+        shizuku.initialize(onStateChanged)
+    }
+
+    val isShizukuAvailable: Boolean
+        get() = shizuku.isBinderAvailable
+
+    val hasShizukuPermission: Boolean
+        get() = shizuku.hasPermission
+
+    val isShizukuReady: Boolean
+        get() = shizuku.isReady
+
+    fun requestShizukuPermission(): Boolean = shizuku.requestPermission()
+
+    val backendName: String
+        get() = when {
+            isShizukuReady -> "Shizuku"
+            cachedClient.get()?.isConnected == true -> "ADB"
+            isShizukuAvailable && !hasShizukuPermission -> "Shizuku permission required"
+            else -> "Disconnected"
+        }
 
     /**
-     * Import an existing private ADB key
+     * Import an existing private ADB key for fallback mode.
      */
     fun importKey(keyBytes: ByteArray) {
-        // Import the key into the store
         adbKey.importPrivateKey(keyBytes)
-        
-        // Re-initialize AdbKey instance to load the new private key from store
         adbKey = AdbKey(keyStore, "soundmaster@${Build.MODEL}")
-        
-        // Clear existing connection to force reconnection with the new key
         disconnect()
-        
-        // Mark as set up since we have a key now
         prefs.edit().putBoolean("adb_imported", true).apply()
     }
 
     val isSetUp: Boolean
-        get() = prefs.getBoolean("adb_paired", false) || prefs.getBoolean("adb_imported", false)
+        get() = isShizukuAvailable ||
+            prefs.getBoolean("adb_paired", false) ||
+            prefs.getBoolean("adb_imported", false)
 
     val isConnected: Boolean
-        get() = cachedClient.get()?.isConnected == true
+        get() = isShizukuReady || cachedClient.get()?.isConnected == true
 
     /**
-     * Discover wireless debugging port using mDNS
+     * Discover wireless debugging port using mDNS for ADB fallback.
      */
     fun discoverPort(callback: (Int) -> Unit) {
+        if (isShizukuReady) {
+            callback(-1)
+            return
+        }
+
         val mdns = AdbMdns(context, AdbMdns.TLS_CONNECT) { port ->
             if (port > 0) {
                 cachedPort = port
@@ -71,8 +98,7 @@ class ShellExecutor(private val context: Context) {
             }
         }
         mdns.start()
-        
-        // Also try last known port
+
         val lastPort = prefs.getInt("last_port", -1)
         if (lastPort > 0) {
             cachedPort = lastPort
@@ -86,9 +112,11 @@ class ShellExecutor(private val context: Context) {
     }
 
     /**
-     * Connect to ADB daemon
+     * Connect to embedded ADB fallback.
      */
     suspend fun connect(port: Int = cachedPort): Boolean {
+        if (isShizukuReady) return true
+
         if (port <= 0) {
             Log.e(TAG, "Invalid port: $port")
             return false
@@ -103,49 +131,20 @@ class ShellExecutor(private val context: Context) {
                 prefs.edit().putInt("last_port", port).apply()
                 true
             } catch (e: Exception) {
-                Log.e(TAG, "Connection failed", e)
+                Log.e(TAG, "ADB connection failed", e)
                 false
             }
         }
     }
 
-    /**
-     * Disconnect from ADB
-     */
     fun disconnect() {
         cachedClient.getAndSet(null)?.close()
     }
 
-    /**
-     * Execute a shell command
-     */
     fun command(command: String, listener: CommandResultListener) {
         scope.launch {
             try {
-                var client = cachedClient.get()
-                
-                // Try to connect if not connected
-                if (client == null || !client.isConnected) {
-                    if (cachedPort <= 0) {
-                        cachedPort = prefs.getInt("last_port", -1)
-                    }
-                    if (cachedPort > 0) {
-                        val connected = connect(cachedPort)
-                        if (connected) {
-                            client = cachedClient.get()
-                        }
-                    }
-                }
-
-                if (client == null || !client.isConnected) {
-                    withContext(Dispatchers.Main) {
-                        listener.onCommandError("ADB not connected")
-                    }
-                    return@launch
-                }
-
-                val output = client.shellCommand(command, null)
-                
+                val output = executePreferred(command)
                 withContext(Dispatchers.Main) {
                     listener.onCommandResult(output, true)
                 }
@@ -154,54 +153,58 @@ class ShellExecutor(private val context: Context) {
                 withContext(Dispatchers.Main) {
                     listener.onCommandError(e.message ?: "Unknown error")
                 }
-                // Connection may be broken, clear it
-                disconnect()
             }
         }
     }
 
-    /**
-     * Execute a shell command synchronously (for use in coroutines)
-     */
     suspend fun commandSync(command: String): Result<String> {
         return withContext(Dispatchers.IO) {
             try {
-                var client = cachedClient.get()
-                
-                if (client == null || !client.isConnected) {
-                    if (cachedPort <= 0) {
-                        cachedPort = prefs.getInt("last_port", -1)
-                    }
-                    if (cachedPort > 0) {
-                        connect(cachedPort)
-                        client = cachedClient.get()
-                    }
-                }
-
-                if (client == null || !client.isConnected) {
-                    return@withContext Result.failure(Exception("ADB not connected"))
-                }
-
-                val output = client.shellCommand(command, null)
-                Result.success(output)
+                Result.success(executePreferred(command))
             } catch (e: Exception) {
                 Log.e(TAG, "Command failed: $command", e)
-                disconnect()
                 Result.failure(e)
             }
         }
     }
 
-    /**
-     * Mark as paired (called after successful pairing)
-     */
+    private suspend fun executePreferred(command: String): String {
+        if (isShizukuReady) {
+            return withContext(Dispatchers.IO) {
+                shizuku.execute(command)
+            }
+        }
+
+        var client = cachedClient.get()
+
+        if (client == null || !client.isConnected) {
+            if (cachedPort <= 0) {
+                cachedPort = prefs.getInt("last_port", -1)
+            }
+            if (cachedPort > 0) {
+                if (connect(cachedPort)) {
+                    client = cachedClient.get()
+                }
+            }
+        }
+
+        if (client == null || !client.isConnected) {
+            throw IllegalStateException(
+                if (isShizukuAvailable && !hasShizukuPermission) {
+                    "Grant AudioPipe access in Shizuku"
+                } else {
+                    "Neither Shizuku nor ADB is connected"
+                }
+            )
+        }
+
+        return client.shellCommand(command, null)
+    }
+
     fun markAsPaired() {
         prefs.edit().putBoolean("adb_paired", true).apply()
     }
 
-    /**
-     * Clear pairing status
-     */
     fun clearPairing() {
         prefs.edit()
             .remove("adb_paired")
