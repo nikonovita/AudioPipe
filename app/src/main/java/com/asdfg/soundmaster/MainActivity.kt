@@ -116,6 +116,11 @@ class MainActivity : AppCompatActivity() {
         createNotificationChannel()
         bindViews()
         setupListeners()
+
+        shellExecutor.initializeShizuku {
+            runOnUiThread { checkAdbStatus() }
+        }
+
         loadApps()
         loadAudioOutputs()
         checkAdbStatus()
@@ -140,9 +145,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         connectButton.setOnClickListener {
-           // Retry connection logic
-           Toast.makeText(this, "Retrying connection...", Toast.LENGTH_SHORT).show()
-           checkAdbStatus()
+            if (shellExecutor.isShizukuAvailable && !shellExecutor.hasShizukuPermission) {
+                if (!shellExecutor.requestShizukuPermission()) {
+                    Toast.makeText(
+                        this,
+                        "Open Shizuku and make sure its service is running",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } else {
+                Toast.makeText(this, "Retrying privileged connection...", Toast.LENGTH_SHORT).show()
+                checkAdbStatus()
+            }
         }
 
         importKeyButton.setOnClickListener {
@@ -229,7 +243,13 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 if (!shellExecutor.isConnected) {
-                    Toast.makeText(this, "Connecting to ADB...", Toast.LENGTH_SHORT).show()
+                    if (shellExecutor.isShizukuAvailable && !shellExecutor.hasShizukuPermission) {
+                        Toast.makeText(this, "Grant AudioPipe access in Shizuku", Toast.LENGTH_SHORT).show()
+                        shellExecutor.requestShizukuPermission()
+                        return@setOnClickListener
+                    }
+
+                    Toast.makeText(this, "Connecting to privileged backend...", Toast.LENGTH_SHORT).show()
                     statusText.text = "Connecting..."
                     
                     lifecycleScope.launch {
@@ -266,10 +286,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkAdbStatus() {
+        if (shellExecutor.isShizukuReady) {
+            updateAdbStatus(true)
+            return
+        }
+
+        if (shellExecutor.isShizukuAvailable && !shellExecutor.hasShizukuPermission) {
+            updateAdbStatus(false)
+            return
+        }
+
         if (shellExecutor.isSetUp) {
             lifecycleScope.launch {
                 shellExecutor.discoverPort { port ->
-                    if (port > 0) {
+                    if (shellExecutor.isShizukuReady) {
+                        runOnUiThread { updateAdbStatus(true) }
+                    } else if (port > 0) {
                         lifecycleScope.launch {
                             val connected = shellExecutor.connect(port)
                             withContext(Dispatchers.Main) {
@@ -289,8 +321,12 @@ class MainActivity : AppCompatActivity() {
     private fun updateAdbStatus(connected: Boolean) {
         if (connected) {
             statusIndicator.setBackgroundResource(R.drawable.status_indicator_green)
-            statusText.text = getString(R.string.connected)
-            connectButton.text = "Connected"
+            statusText.text = "Connected via ${shellExecutor.backendName}"
+            connectButton.text = shellExecutor.backendName
+        } else if (shellExecutor.isShizukuAvailable && !shellExecutor.hasShizukuPermission) {
+            statusIndicator.setBackgroundResource(R.drawable.status_indicator_red)
+            statusText.text = "Shizuku permission required"
+            connectButton.text = "Grant"
         } else {
             statusIndicator.setBackgroundResource(R.drawable.status_indicator_red)
             statusText.text = getString(R.string.disconnected)
