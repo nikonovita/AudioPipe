@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - media-button-bridge
+      - car-audio-optimized
 
 jobs:
   build:
