@@ -7,6 +7,18 @@ android {
     namespace 'com.asdfg.soundmaster'
     compileSdk 34
 
+    signingConfigs {
+        debug {
+            // This project-local key intentionally signs every reproducible debug build.
+            // It is not a production credential; keeping it in the repository makes APKs
+            // produced locally and by GitHub Actions update-compatible with each other.
+            storeFile file('audiopipe-debug.keystore')
+            storePassword 'android'
+            keyAlias 'audiopipe-debug'
+            keyPassword 'android'
+        }
+    }
+
     defaultConfig {
         applicationId "com.asdfg.soundmaster"
         minSdk 30
@@ -27,6 +39,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
